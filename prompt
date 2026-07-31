@@ -301,3 +301,49 @@ Take Current_Indexes.txt as resurces and run this promt on all repos
 
 -----------------------------------------------
 -----------------------------------------------
+
+
+
+
+
+Review all MongoDB queries and optimize them for performance, readability, and maintainability without changing application behavior.
+
+Do not change business logic, authorization filters, result shape, sort order, pagination semantics, or null/edge-case behavior.
+
+1. Projection Optimization:
+If a query does not include a projection, infer the context from the calling function and identify which fields are actually being used downstream. Based on this, add a minimal projection that includes only the required fields and excludes any unnecessary data, ensuring the query returns only what is needed for optimal performance.
+If a projection is already present, review it carefully and remove any unused or unnecessary fields so that the query returns only what is strictly needed, improving efficiency and reducing data overhead.
+
+2. $lookup Optimization:
+Optimize $lookup stages by removing any unnecessary joins that do not contribute to the final result.
+Wherever possible, replace basic lookups with pipeline-based lookups, and use stages like $match, $project, $sort, and $limit within the lookup pipeline to restrict the joined data to only what is required, reducing memory usage and improving overall query performance.
+
+3. Aggregation Pipeline Optimization:
+Reorder pipeline stages when semantics and index usage are preserved: $match → $project → $sort → $lookup → ...other stages.
+If we have skip and limit and do not have match after lookup then reorderer pipeline stages to: $match → $project → $sort → $skip → $limit → $lookup → other stages, so pagination is applied before any expensive joins.
+Push $match as early as possible.
+Avoid $group without filtering.
+
+4. Remove $facet:
+Detect cases where $facet is used to fetch both paginated data and total count in a single aggregation.
+Replace this pattern with two separate queries for better performance and clarity:
+(a) one query to fetch the data (using find or aggregate as needed)
+(b) a second query to get the total count using countDocuments. Additionally, create a reusable function that constructs and returns the common $match query; for aggregation cases, it should return both the $match stage and the full pipeline. Reuse this shared match logic across both queries to ensure consistency between the data and count results.
+
+5. $and / $or optimization:
+Avoid redundant $and, { $and: [condition] } → condition
+If $and / $or has only one condition then use the condition directly.
+Flatten nested conditions
+
+6. $in / $nin Analysis:
+In case of $nin, analyze the calling function and if possible replace $nin with $in to utilize index usage.
+Replace only when allowed set is explicitly known.
+Avoid large $in and $nin arrays.
+
+7. Read Preference Optimization:
+Do this only for list queries, having filters, pagination, sort, etc.
+For read-only, non-transactional queries where eventual consistency is acceptable, route reads to secondary nodes by using { readPreference: 'secondaryPreferred' }, helping reduce load on the primary and improve overall system scalability.
+Pass readPreference in options directly, do not change mongo wrapper.
+
+8. Indexes
+Suggest appropriate indexes based on the query pattern, including both simple and compound indexes, following the ESR (Equality, Sort, Range) rule. Ensure that fields used in equality conditions come first, followed by fields used for sorting, and then range-based fields, so the index can be utilized efficiently for filtering and ordering.
