@@ -1,0 +1,303 @@
+-----------------------------------------------
+QUERY 1: To get Current Indexes from DB
+
+db.getCollectionNames().forEach(function (collection) {
+  print(collection + ' ' + JSON.stringify(db[collection].getIndexes()));
+});
+
+Store these indexes in txt file Current_Indexes.txt in following format:
+We will use this file as resource in claude
+
+Marketplace DB Current indexes:
+leadTags [{"v":2,"key":{"_id":1},"name":"_id_"}]
+mpRateCards [{"v":2,"key":{"_id":1},"name":"_id_"},{"v":2,"key":{"vendorId":1,"status":1,"score":-1},"name":"vendorId_1_status_1_score_-1"},{"v":2,"key":{"interestedCount":1},"name":"interestedCount_1"}]
+mpAddress [{"v":2,"key":{"_id":1},"name":"_id_"}]
+.
+.
+.
+
+
+Auth DB Current Indexes:
+masterAdmins [{"v":2,"key":{"_id":1},"name":"_id_"}]
+sessions [{"v":2,"key":{"_id":1},"name":"_id_"}]
+customers [{"v":2,"key":{"_id":1},"name":"_id_"}]
+.
+.
+.
+
+Digireality DB Current Indexes:
+ticketNotes [{"v":2,"key":{"_id":1},"name":"_id_"}]
+your_collection_name [{"v":2,"key":{"_id":1},"name":"_id_"}]
+.
+.
+.
+
+Digiconfig DB Current Indexes:
+questions [{"v":2,"key":{"_id":1},"name":"_id_"}]
+cities [{"v":2,"key":{"_id":1},"name":"_id_"}]
+.
+.
+.
+
+--------------------------------------------------
+--------------------------------------------------
+QUERY 2:
+
+MongoDB Index Optimization Prompt (ESR-Based)
+
+You are a MongoDB performance expert. Your task is to analyze existing indexes and application queries, and recommend index optimizations based on the ESR rule (Equality → Sort → Range).
+
+--------------------------------------------------
+
+INPUTS
+
+1. Current_Indexes.txt
+Contains all existing MongoDB indexes across collections in the format:
+collection_name [List of Indexes]
+
+2. repos folder
+Contains multiple code repositories with MongoDB queries (Node.js / Mongoose / native driver).
+
+--------------------------------------------------
+
+STEP 1: EXTRACT & NORMALIZE QUERY PATTERNS
+
+For each query in the repos:
+
+Identify:
+- Collection name
+- Equality filters:
+  - $eq, direct match (field: value)
+  - $in
+- Sort fields with direction:
+  - { field: 1 } or { field: -1 }
+- Range filters:
+  - $gt, $lt, $gte, $lte
+- Aggregation filters:
+  - $match stages (including inside $lookup pipelines)
+
+Ignore:
+- Projections
+- Business logic
+
+Query Normalization & Deduplication:
+- Replace literal values with placeholders
+- Normalize structurally identical queries
+- Group duplicate query patterns across repositories
+- Treat each unique pattern only once
+
+--------------------------------------------------
+
+STEP 2: APPLY ESR RULE
+
+For each unique query pattern, determine the optimal index:
+
+Order:
+1. Equality fields first
+   - Prefer higher selectivity fields first (heuristic if needed)
+
+2. Sort fields next
+   - Maintain correct direction (1 / -1)
+
+3. Range field last
+   - Only one range field allowed at the end
+
+Rules:
+- Do not place fields after a range field
+- If multiple range filters exist:
+  - Choose the most selective field
+- Ensure index supports sorting (correct order + direction)
+
+--------------------------------------------------
+
+STEP 3: COMPARE WITH EXISTING INDEXES
+
+Using Current_Indexes.txt:
+
+For each query pattern, identify:
+- Covered indexes (exact or prefix match)
+- Missing indexes
+- Incorrect field order (violates ESR)
+- Sort direction mismatches
+- Redundant indexes (prefix overlap)
+
+Index Coverage Rules:
+- Index is usable if:
+  - Equality fields match prefix
+  - Sort fields align in order and direction
+- Apply prefix rule:
+  - { a: 1, b: 1 } covers { a: 1 }
+
+Caution:
+- Do NOT treat partial, sparse, or TTL indexes as fully replaceable
+- Do NOT suggest deletion unless confidently redundant
+
+--------------------------------------------------
+
+STEP 4: GENERATE RECOMMENDATIONS (COLLECTION-WISE)
+
+Group results by collection.
+
+A. New Indexes
+
+Suggest only if:
+- No existing index satisfies the query
+- Cannot be fixed via reordering
+
+Constraints:
+- Prefer one optimal compound index per query pattern
+- Merge similar patterns into a single index where possible
+- Avoid over-indexing (max ~3 per collection unless necessary)
+
+Format:
+{ fieldA: 1, fieldB: -1, fieldC: 1 }
+
+--------------------------------------------------
+
+B. Indexes to Delete
+
+Suggest removal only if:
+- Not used by any identified query pattern AND
+- Not a prefix of any useful index
+
+Format:
+{ fieldA: 1, fieldB: 1 }
+
+--------------------------------------------------
+
+C. Index Modifications
+
+Prefer modifying existing indexes instead of creating new ones.
+
+Suggest when:
+- Same fields exist but wrong order
+- ESR violation
+- Sort direction mismatch
+
+Format:
+Existing:  { fieldC: 1, fieldA: 1 }
+Suggested: { fieldA: 1, fieldC: 1 }
+Reason: Correct ESR order (Equality → Sort → Range)
+
+--------------------------------------------------
+
+IMPORTANT RULES
+
+- Follow ESR strictly
+- Avoid index explosion
+- Prefer shared indexes across multiple query patterns
+- Do NOT suggest indexes already effectively covered
+- Ensure sort compatibility (order + direction)
+- Be minimal and precise
+
+--------------------------------------------------
+
+OUTPUT FORMAT (STRICT)
+
+1. Summary
+- Total queries analyzed:
+- Unique query patterns:
+- Total indexes reviewed:
+- Redundant indexes count:
+- Missing index count:
+
+2. Collection-wise Recommendations
+
+Collection: <collection_name>
+
+Existing Indexes:
+- { ... }
+- { ... }
+
+New Indexes:
+- { ... }
+- { ... }
+
+Indexes to Delete:
+- { ... }
+- { ... }
+
+Modifications:
+- Existing: { ... }
+  Suggested: { ... }
+  Reason: ...
+
+--------------------------------------------------
+
+Collection: <collection_name>
+
+New Indexes:
+- None
+
+Indexes to Delete:
+- None
+
+Modifications:
+- None
+
+--------------------------------------------------
+
+STEP 5: GENERATE SAFE MONGO SHELL SCRIPT
+
+At the end, generate a MongoDB shell script to apply the changes.
+
+Requirements:
+
+1. Script must be SAFE and IDEMPOTENT
+2. Use createIndex with options:
+   - { background: true, name: "<generated_name>" }
+3. DO NOT drop indexes immediately:
+   - Instead, COMMENT OUT dropIndex statements
+4. Add clear comments for each action
+5. Preserve existing indexes unless explicitly marked for deletion
+6. For modifications:
+   - Create new index first
+   - Comment old index for later removal
+7. Use consistent index naming convention:
+   <field1>_<field2>_<order>
+
+--------------------------------------------------
+
+SCRIPT FORMAT
+
+// Use database
+use <db_name>
+
+// ==============================
+// Collection: <collection_name>
+// ==============================
+
+// Create new indexes
+db.<collection>.createIndex(
+  { fieldA: 1, fieldB: -1 },
+  { name: "fieldA_fieldB_idx", background: true }
+)
+
+// Modify index (create new first)
+db.<collection>.createIndex(
+  { fieldA: 1, fieldC: 1 },
+  { name: "fieldA_fieldC_idx", background: true }
+)
+
+// to remove indexes (review required)
+// db.<collection>.dropIndex("old_index_name")
+
+// Redundant index (review before delete)
+// db.<collection>.dropIndex("redundant_index_name")
+
+--------------------------------------------------
+
+FINAL NOTE
+
+- Script should be directly runnable in Mongo shell
+- All destructive operations must be commented
+- Clearly separate collections
+- Add human-readable comments explaining each change
+
+-----------------------------------------------
+-----------------------------------------------
+
+Take Current_Indexes.txt as resurces and run this promt on all repos
+
+-----------------------------------------------
+-----------------------------------------------
